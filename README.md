@@ -9,6 +9,7 @@ GROMI 是一个 Windows 桌面宠物小应用，使用 Python、Tkinter、Pillow
 - 任务栏巡逻模式：自动适配任务栏高度，保持小尺寸活动
 - 普通桌面模式：可调整宠物显示大小
 - 守护模式：固定不动，禁止自动巡逻
+- 开机自启动：可在设置中开启或关闭
 - 系统托盘图标：可隐藏、显示、切换模式和退出
 - 天气气泡：鼠标悬停 3 秒后显示天气
 - 单实例保护：如果 GROMI 已经在运行，会弹窗提示
@@ -44,6 +45,7 @@ build.bat
 
 ```text
 dist\GROMI桌面宠物.exe
+dist\GROMI.exe
 ```
 
 ## GitHub 自动构建
@@ -61,6 +63,8 @@ dist\GROMI桌面宠物.exe
 ```text
 GROMI-Desktop-Pet-Windows
 ```
+
+如果推送 `v*` 格式的 tag，例如 `v0.1.1`，workflow 会自动创建 GitHub Release，并上传 `GROMI.exe`。
 
 ## 设置位置
 

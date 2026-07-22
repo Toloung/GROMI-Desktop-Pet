@@ -40,5 +40,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
+copy /Y "dist\GROMI桌面宠物.exe" "dist\GROMI.exe" >nul
+
 echo [3/3] Finished: dist\GROMI桌面宠物.exe
+echo       Also copied: dist\GROMI.exe
 pause

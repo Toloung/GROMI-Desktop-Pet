@@ -294,6 +294,33 @@ class GromiPet:
             self.last_geometry = None
             self.refresh()
 
+    def startup_script_path(self):
+        startup_dir = Path(os.environ.get("APPDATA", Path.home())) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+        return startup_dir / "GROMI Desktop Pet.vbs"
+
+    def startup_command(self):
+        if getattr(sys, "frozen", False):
+            return f'"{Path(sys.executable)}"'
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        interpreter = pythonw if pythonw.exists() else Path(sys.executable)
+        return f'"{interpreter}" "{Path(__file__).resolve()}"'
+
+    def startup_enabled(self):
+        return self.startup_script_path().exists()
+
+    def set_startup_enabled(self, enabled):
+        path = self.startup_script_path()
+        if enabled:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            command = self.startup_command().replace('"', '""')
+            path.write_text(
+                'Set WshShell = CreateObject("WScript.Shell")\n'
+                f'WshShell.Run "{command}", 0, False\n',
+                encoding="utf-8",
+            )
+        elif path.exists():
+            path.unlink()
+
     def show_settings(self):
         if self.settings_window and self.settings_window.winfo_exists():
             self.settings_window.deiconify()
@@ -306,42 +333,54 @@ class GromiPet:
         window.configure(bg="#FFF8EE")
         window.resizable(False, False)
         window.attributes("-topmost", True)
-        # Leave generous vertical room for Windows high-DPI font scaling so the
-        # save button is never clipped below the client area.
-        window.geometry("340x420")
-        window.minsize(340, 420)
+        window.geometry("390x520")
+        window.minsize(390, 520)
 
         body = tk.Frame(window, bg="#FFF8EE", padx=16, pady=14)
         body.pack(fill="both", expand=True)
         title = tk.Label(body, text="GROMI 设置", bg="#FFF8EE", fg="#55436F",
                          font=("Microsoft YaHei UI", 12, "bold"))
         title.pack(anchor="w")
-        mode_text = "当前：任务栏巡逻（自动缩小）" if self.taskbar_hosted else "当前：普通桌面（正常大小）"
-        tk.Label(body, text=mode_text, bg="#FFF8EE", fg="#786A7B", font=("Microsoft YaHei UI", 9)).pack(anchor="w", pady=(2, 8))
+        tk.Label(body, text="轻轻调一调，GROMI 就按你的节奏活动。", bg="#FFF8EE", fg="#786A7B",
+                 font=("Microsoft YaHei UI", 9)).pack(anchor="w", pady=(2, 10))
 
-        mode_button_text = "切换到普通桌面" if self.taskbar_hosted else "切换到任务栏巡逻"
-        tk.Button(body, text=mode_button_text,
-                  command=lambda: (self.set_mode("desktop" if self.taskbar_hosted else "taskbar"), window.destroy()),
-                  bg="#DCC9F4", fg="#4D3A67", relief="flat", padx=10, pady=4).pack(anchor="w", fill="x")
+        def add_section(text):
+            tk.Label(body, text=text, bg="#FFF8EE", fg="#55436F",
+                     font=("Microsoft YaHei UI", 9, "bold")).pack(anchor="w", pady=(8, 3))
+
+        def add_hint(text):
+            tk.Label(body, text=text, bg="#FFF8EE", fg="#A08D9B",
+                     font=("Microsoft YaHei UI", 8)).pack(anchor="w", pady=(2, 0))
+
+        add_section("模式")
+        mode_var = tk.StringVar(value="taskbar" if self.taskbar_hosted else "desktop")
+        mode_row = tk.Frame(body, bg="#FFF8EE")
+        mode_row.pack(fill="x")
+        tk.Radiobutton(mode_row, text="任务栏巡逻", value="taskbar", variable=mode_var,
+                       bg="#FFF8EE", activebackground="#FFF8EE", selectcolor="#FFF8EE").pack(side="left")
+        tk.Radiobutton(mode_row, text="普通桌面", value="desktop", variable=mode_var,
+                       bg="#FFF8EE", activebackground="#FFF8EE", selectcolor="#FFF8EE").pack(side="left", padx=(14, 0))
+        add_hint("任务栏模式会自动缩小；普通模式使用下面的桌面大小。")
 
         guard_var = tk.BooleanVar(value=self.guard_mode)
         weather_var = tk.BooleanVar(value=self.weather_enabled)
         top_var = tk.BooleanVar(value=self.always_on_top)
+        startup_var = tk.BooleanVar(value=self.startup_enabled())
+
+        add_section("行为")
         tk.Checkbutton(body, text="守护模式（固定不动）", variable=guard_var,
-                       bg="#FFF8EE", activebackground="#FFF8EE", selectcolor="#FFF8EE").pack(anchor="w", pady=(8, 0))
+                       bg="#FFF8EE", activebackground="#FFF8EE", selectcolor="#FFF8EE").pack(anchor="w")
+        tk.Checkbutton(body, text="开机自动启动", variable=startup_var,
+                       bg="#FFF8EE", activebackground="#FFF8EE", selectcolor="#FFF8EE").pack(anchor="w")
         tk.Checkbutton(body, text="悬停 3 秒显示天气", variable=weather_var,
                        bg="#FFF8EE", activebackground="#FFF8EE", selectcolor="#FFF8EE").pack(anchor="w")
+
+        add_section("显示")
         tk.Checkbutton(body, text="普通桌面时置顶", variable=top_var,
                        bg="#FFF8EE", activebackground="#FFF8EE", selectcolor="#FFF8EE").pack(anchor="w")
 
-        city_text = self.city if self.city else "未设置城市"
-        city_row = tk.Frame(body, bg="#FFF8EE")
-        city_row.pack(fill="x", pady=(7, 0))
-        tk.Label(city_row, text=f"天气城市：{city_text}", bg="#FFF8EE", fg="#786A7B").pack(side="left")
-        tk.Button(city_row, text="修改", command=self.set_city, bg="#F4E7D5", relief="flat", padx=8).pack(side="right")
-
         size_row = tk.Frame(body, bg="#FFF8EE")
-        size_row.pack(fill="x", pady=(7, 0))
+        size_row.pack(fill="x", pady=(4, 0))
         size_var = tk.StringVar(value=f"普通桌面大小：{int(self.desktop_scale * 100)}%")
 
         def adjust_desktop_size(step):
@@ -351,27 +390,46 @@ class GromiPet:
         tk.Label(size_row, textvariable=size_var, bg="#FFF8EE", fg="#786A7B").pack(side="left")
         tk.Button(size_row, text="－", command=lambda: adjust_desktop_size(-0.05), bg="#E8DEF8", relief="flat", width=3).pack(side="right")
         tk.Button(size_row, text="＋", command=lambda: adjust_desktop_size(0.05), bg="#E8DEF8", relief="flat", width=3).pack(side="right", padx=(0, 4))
-        tk.Label(body, text="任务栏模式会自动缩小；普通模式恢复这里的尺寸。", bg="#FFF8EE", fg="#A08D9B",
-                 font=("Microsoft YaHei UI", 8)).pack(anchor="w", pady=(3, 0))
+
+        add_section("天气")
+        city_var = tk.StringVar(value=f"天气城市：{self.city if self.city else '未设置城市'}")
+        city_row = tk.Frame(body, bg="#FFF8EE")
+        city_row.pack(fill="x")
+        tk.Label(city_row, textvariable=city_var, bg="#FFF8EE", fg="#786A7B").pack(side="left")
+
+        def change_city():
+            self.set_city()
+            city_var.set(f"天气城市：{self.city if self.city else '未设置城市'}")
+
+        tk.Button(city_row, text="修改", command=change_city, bg="#F4E7D5", relief="flat", padx=8).pack(side="right")
 
         saved_label = tk.Label(body, text="", bg="#FFF8EE", fg="#62835F", font=("Microsoft YaHei UI", 9, "bold"))
-        saved_label.pack(anchor="w", pady=(8, 2))
+        saved_label.pack(anchor="w", pady=(10, 2))
 
         def save_settings():
             desired_guard = bool(guard_var.get())
             desired_weather = bool(weather_var.get())
             desired_topmost = bool(top_var.get())
-            if desired_guard != self.guard_mode:
-                self.toggle_guard()
-            if desired_weather != self.weather_enabled:
-                self.toggle_weather()
-            if desired_topmost != self.always_on_top:
-                self.always_on_top = desired_topmost
-                self.root.attributes("-topmost", True if self.taskbar_hosted else self.always_on_top)
-            self.save_config()
-            if self.tray_icon:
-                self.tray_icon.update_menu()
-            saved_label.configure(text="已保存 ✓")
+            desired_startup = bool(startup_var.get())
+            desired_mode = mode_var.get()
+            try:
+                if desired_guard != self.guard_mode:
+                    self.toggle_guard()
+                if desired_weather != self.weather_enabled:
+                    self.toggle_weather()
+                if desired_topmost != self.always_on_top:
+                    self.always_on_top = desired_topmost
+                    self.root.attributes("-topmost", True if self.taskbar_hosted else self.always_on_top)
+                if desired_startup != self.startup_enabled():
+                    self.set_startup_enabled(desired_startup)
+                if desired_mode != ("taskbar" if self.taskbar_hosted else "desktop"):
+                    self.set_mode(desired_mode)
+                self.save_config()
+                if self.tray_icon:
+                    self.tray_icon.update_menu()
+                saved_label.configure(text="已保存 ✓")
+            except OSError as error:
+                saved_label.configure(text=f"保存失败：{error}")
 
         def close_settings():
             self.settings_window = None
