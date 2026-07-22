@@ -1,0 +1,48 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Build executable
+        run: >
+          python -m PyInstaller
+          --noconfirm
+          --clean
+          --onefile
+          --windowed
+          --name "GROMI桌面宠物"
+          --icon "gromi.ico"
+          --add-data "gromi_spritesheet.webp;."
+          --hidden-import pystray._win32
+          gromi_desktop_pet.py
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v7
+        with:
+          name: GROMI-Desktop-Pet-Windows
+          path: dist/GROMI桌面宠物.exe
+          retention-days: 14
