@@ -124,7 +124,7 @@ class GromiPet:
         self.tray_icon = None
         self.settings_window = None
         self.visible = True
-        self.weather = {"title": "天气未设置", "detail": "右键 GROMI → 设置城市", "tip": "设置城市后，GROMI 会看一眼天空。", "updated": ""}
+        self.weather = {"title": "天气未设置", "detail": "右键 GROMI → 设置城市", "tip": "提示：设置城市后会显示天气。", "updated": ""}
 
         self.load_sprites()
         self.set_render_scale(self.scale)
@@ -771,22 +771,22 @@ class GromiPet:
 
     def weather_tip(self, title, apparent_temperature=None):
         if "雨" in title:
-            return "GROMI 提醒：出门记得带伞。"
+            return "提示：出门记得带伞。"
         if "雪" in title:
-            return "GROMI 提醒：路滑，慢慢走。"
+            return "提示：路滑，慢慢走。"
         if "雷" in title:
-            return "GROMI 提醒：先躲进安全的地方。"
+            return "提示：先躲进安全的地方。"
         try:
             temp = float(apparent_temperature)
         except (TypeError, ValueError):
             temp = None
         if temp is not None and temp >= 32:
-            return "GROMI 提醒：今天适合补水和少晒太阳。"
+            return "提示：今天适合补水和少晒太阳。"
         if temp is not None and temp <= 8:
-            return "GROMI 提醒：多穿一点，别被风偷袭。"
+            return "提示：多穿一点，别被风偷袭。"
         if "晴" in title:
-            return "GROMI 提醒：今天适合散步，也适合摸鱼。"
-        return "GROMI 提醒：保持好心情。"
+            return "提示：今天适合散步，也适合摸鱼。"
+        return "提示：保持好心情。"
 
     def draw_bubble(self, canvas, x1, y1, x2, y2, radius, fill, outline, tail="bottom-left"):
         if tail == "bottom-right":
@@ -813,7 +813,7 @@ class GromiPet:
 
     def make_card(self, width, tail="bottom-left"):
         detailed = width > 220
-        height = 146 if detailed else 134
+        height = 132 if detailed else 126
         card = tk.Toplevel(self.root)
         card.overrideredirect(True)
         card.attributes("-topmost", True)
@@ -827,15 +827,15 @@ class GromiPet:
         canvas.create_text(35, 30, text="GROMI 天气", anchor="w", fill="#55436F",
                            font=("Microsoft YaHei UI", 9, "bold"))
         canvas.create_oval(width - 45, 23, width - 31, 37, fill="#FF9DB1", outline="")
-        canvas.create_text(27, 55, text=self.weather["title"], anchor="w", fill="#40364B",
+        title_text = self.weather["title"]
+        if self.weather.get("updated"):
+            title_text = f"{title_text} · {self.weather['updated']}"
+        canvas.create_text(27, 55, text=title_text, anchor="w", fill="#40364B",
                            font=("Microsoft YaHei UI", 10, "bold"), width=width - 58)
         canvas.create_text(27, 78, text=self.weather["detail"], anchor="w", fill="#6D6072",
                            font=("Microsoft YaHei UI", 9), width=width - 54)
-        canvas.create_text(27, 102, text=self.weather.get("tip", "GROMI 提醒：保持好心情。"),
-                           anchor="w", fill="#7C6A82", font=("Microsoft YaHei UI", 8), width=width - 56)
-        if detailed and self.weather.get("updated"):
-            canvas.create_text(27, 126, text=f"更新 {self.weather['updated']}", anchor="w", fill="#AA9DAA",
-                               font=("Microsoft YaHei UI", 8))
+        canvas.create_text(27, 101, text=self.weather.get("tip", "提示：保持好心情。"),
+                           anchor="w", fill="#7C6A82", font=("Microsoft YaHei UI", 8), width=width - 62)
         for widget in (card, canvas):
             widget.bind("<Enter>", self.card_enter)
             widget.bind("<Leave>", self.card_leave)
@@ -890,7 +890,7 @@ class GromiPet:
         if city and city.strip():
             self.city = city.strip()
             self.weather = {"title": f"{self.city}：正在更新天气", "detail": "GROMI 正在查看天空…",
-                            "tip": "等一下下，天气消息正在路上。", "updated": ""}
+                            "tip": "提示：天气消息正在路上。", "updated": ""}
             self.save_config()
             self.refresh_weather(force=True)
 
@@ -927,7 +927,7 @@ class GromiPet:
                 }
             except (OSError, KeyError, IndexError, ValueError, json.JSONDecodeError):
                 weather = {"title": f"{request_city}：天气暂不可用", "detail": "请检查网络，稍后重试",
-                           "tip": "GROMI 暂时看不清天空。", "updated": ""}
+                           "tip": "提示：暂时看不清天空。", "updated": ""}
             self.weather_queue.put((request_id, weather))
 
         threading.Thread(target=worker, daemon=True).start()
