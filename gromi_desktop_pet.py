@@ -788,9 +788,12 @@ class GromiPet:
             return "GROMI 提醒：今天适合散步，也适合摸鱼。"
         return "GROMI 提醒：保持好心情。"
 
-    def draw_bubble(self, canvas, x1, y1, x2, y2, radius, fill, outline):
-        canvas.create_polygon((x1 + 32, y2 - 2, x1 + 52, y2 - 2, x1 + 37, y2 + 12),
-                              fill=fill, outline=outline, width=2)
+    def draw_bubble(self, canvas, x1, y1, x2, y2, radius, fill, outline, tail="bottom-left"):
+        if tail == "bottom-right":
+            points = (x2 - 52, y2 - 2, x2 - 32, y2 - 2, x2 - 37, y2 + 12)
+        else:
+            points = (x1 + 32, y2 - 2, x1 + 52, y2 - 2, x1 + 37, y2 + 12)
+        canvas.create_polygon(points, fill=fill, outline=outline, width=2)
         canvas.create_rectangle(x1 + radius, y1, x2 - radius, y2, fill=fill, outline="")
         canvas.create_rectangle(x1, y1 + radius, x2, y2 - radius, fill=fill, outline="")
         for left, top, right, bottom, start in (
@@ -808,9 +811,9 @@ class GromiPet:
         canvas.create_line(x1 + radius, y2, x2 - radius, y2, fill=outline, width=2)
         canvas.create_line(x1, y1 + radius, x1, y2 - radius, fill=outline, width=2)
 
-    def make_card(self, width):
+    def make_card(self, width, tail="bottom-left"):
         detailed = width > 220
-        height = 142 if detailed else 126
+        height = 146 if detailed else 134
         card = tk.Toplevel(self.root)
         card.overrideredirect(True)
         card.attributes("-topmost", True)
@@ -819,19 +822,19 @@ class GromiPet:
         canvas = tk.Canvas(card, width=width, height=height, bg=TRANSPARENT_COLOR, highlightthickness=0, bd=0)
         canvas.pack()
         bubble_fill, outline = "#FFF8EE", "#3F354A"
-        self.draw_bubble(canvas, 8, 8, width - 8, height - 18, 16, bubble_fill, outline)
+        self.draw_bubble(canvas, 8, 8, width - 8, height - 20, 16, bubble_fill, outline, tail)
         canvas.create_rectangle(25, 20, width - 25, 41, fill="#D6C2F3", outline="")
         canvas.create_text(35, 30, text="GROMI 天气", anchor="w", fill="#55436F",
                            font=("Microsoft YaHei UI", 9, "bold"))
         canvas.create_oval(width - 45, 23, width - 31, 37, fill="#FF9DB1", outline="")
-        canvas.create_text(27, 54, text=self.weather["title"], anchor="w", fill="#40364B",
-                           font=("Microsoft YaHei UI", 10, "bold"), width=width - 54)
+        canvas.create_text(27, 55, text=self.weather["title"], anchor="w", fill="#40364B",
+                           font=("Microsoft YaHei UI", 10, "bold"), width=width - 58)
         canvas.create_text(27, 78, text=self.weather["detail"], anchor="w", fill="#6D6072",
                            font=("Microsoft YaHei UI", 9), width=width - 54)
-        canvas.create_text(27, 101, text=self.weather.get("tip", "GROMI 提醒：保持好心情。"),
-                           anchor="w", fill="#7C6A82", font=("Microsoft YaHei UI", 8), width=width - 54)
+        canvas.create_text(27, 102, text=self.weather.get("tip", "GROMI 提醒：保持好心情。"),
+                           anchor="w", fill="#7C6A82", font=("Microsoft YaHei UI", 8), width=width - 56)
         if detailed and self.weather.get("updated"):
-            canvas.create_text(27, 121, text=f"更新 {self.weather['updated']}", anchor="w", fill="#AA9DAA",
+            canvas.create_text(27, 126, text=f"更新 {self.weather['updated']}", anchor="w", fill="#AA9DAA",
                                font=("Microsoft YaHei UI", 8))
         for widget in (card, canvas):
             widget.bind("<Enter>", self.card_enter)
@@ -845,11 +848,18 @@ class GromiPet:
             return
         self.refresh_weather()
         self.hide_hover_card()
-        self.hover_card = self.make_card(220)
-        x = self.root.winfo_rootx() + self.pet_w - 10
-        if x + self.hover_card.winfo_width() > self.screen_w - 8:
-            x = max(8, self.root.winfo_rootx() - self.hover_card.winfo_width() + 10)
-        y = max(8, self.root.winfo_rooty() - self.hover_card.winfo_height() + 20)
+        width = 260 if self.taskbar_hosted else 240
+        prefer_left = self.root.winfo_rootx() + self.pet_w + width > self.screen_w - 8
+        tail = "bottom-right" if prefer_left else "bottom-left"
+        self.hover_card = self.make_card(width, tail)
+        if prefer_left:
+            x = max(8, self.root.winfo_rootx() - self.hover_card.winfo_width() + self.pet_w // 2)
+        else:
+            x = self.root.winfo_rootx() + max(10, self.pet_w // 2)
+        y = self.root.winfo_rooty() - self.hover_card.winfo_height() - 6
+        if y < 8:
+            y = min(self.screen_h - self.hover_card.winfo_height() - 8,
+                    self.root.winfo_rooty() + self.visible_pet_h() + 8)
         self.hover_card.geometry(f"+{x}+{y}")
 
     def hide_hover_card(self):
@@ -869,7 +879,7 @@ class GromiPet:
             self.info_card = None
             return
         self.refresh_weather(force=True)
-        self.info_card = self.make_card(280)
+        self.info_card = self.make_card(300)
         self.info_card.bind("<Button-1>", lambda _event: self.show_info_card())
         x = max(6, min(self.screen_w - self.info_card.winfo_width() - 6, self.root.winfo_rootx() - 80))
         y = max(6, self.root.winfo_rooty() - self.info_card.winfo_height() - 8)
