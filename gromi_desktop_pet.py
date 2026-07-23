@@ -29,6 +29,13 @@ MOVE_MS = 30
 MOVE_SPEED = 2
 CONFIG_PATH = Path(os.environ.get("APPDATA", Path.home())) / "GROMI Desktop Pet" / "settings.json"
 MUTEX_NAME = "Local\\GROMI_Desktop_Pet_Single_Instance"
+ACTIVITY_LEVELS = {
+    "calm": ("安静", (28, 44)),
+    "normal": ("普通", (16, 30)),
+    "active": ("活泼", (8, 16)),
+}
+TASKBAR_START_MARGIN = 96
+TASKBAR_TRAY_MARGIN = 220
 
 WEATHER_CODES = {
     0: "晴朗", 1: "大致晴朗", 2: "局部多云", 3: "阴天", 45: "有雾", 48: "雾凇",
@@ -84,6 +91,12 @@ class GromiPet:
         self.weather_enabled = bool(self.config.get("weather_enabled", True))
         self.guard_mode = bool(self.config.get("guard_mode", False))
         self.always_on_top = bool(self.config.get("always_on_top", True))
+        self.peek_mode = bool(self.config.get("peek_mode", False))
+        self.activity_level = self.config.get("activity_level", "normal")
+        if self.activity_level not in ACTIVITY_LEVELS:
+            self.activity_level = "normal"
+        self.weather_refresh_minutes = int(self.config.get("weather_refresh_minutes", 10))
+        self.weather_refresh_minutes = max(5, min(60, self.weather_refresh_minutes))
         self.taskbar_hosted = False
         self.taskbar_hwnd = 0
         self.taskbar_width = 0
@@ -95,7 +108,7 @@ class GromiPet:
         self.direction = "right"
         self.frame_index = 0
         self.action_until = 0.0
-        self.next_activity_at = float("inf") if self.guard_mode else time.monotonic() + random.uniform(14, 22)
+        self.next_activity_at = float("inf") if self.guard_mode else time.monotonic() + self.next_activity_delay()
         self.dragging = False
         self.did_drag = False
         self.drag_offset = (0, 0)
@@ -111,7 +124,7 @@ class GromiPet:
         self.tray_icon = None
         self.settings_window = None
         self.visible = True
-        self.weather = {"title": "天气未设置", "detail": "右键 GROMI → 设置城市", "updated": ""}
+        self.weather = {"title": "天气未设置", "detail": "右键 GROMI → 设置城市", "tip": "设置城市后，GROMI 会看一眼天空。", "updated": ""}
 
         self.load_sprites()
         self.set_render_scale(self.scale)
@@ -148,15 +161,28 @@ class GromiPet:
             return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return {"mode": "taskbar", "desktop_scale": DEFAULT_SCALE, "city": "", "weather_enabled": True,
-                    "guard_mode": False, "always_on_top": True}
+                    "guard_mode": False, "always_on_top": True, "peek_mode": False,
+                    "activity_level": "normal", "weather_refresh_minutes": 10}
 
     def save_config(self):
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         CONFIG_PATH.write_text(json.dumps({
             "mode": self.mode, "desktop_scale": self.desktop_scale, "city": self.city,
             "weather_enabled": self.weather_enabled, "guard_mode": self.guard_mode,
-            "always_on_top": self.always_on_top,
+            "always_on_top": self.always_on_top, "peek_mode": self.peek_mode,
+            "activity_level": self.activity_level,
+            "weather_refresh_minutes": self.weather_refresh_minutes,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def next_activity_delay(self):
+        _, delay_range = ACTIVITY_LEVELS.get(self.activity_level, ACTIVITY_LEVELS["normal"])
+        return random.uniform(*delay_range)
+
+    def activity_label(self):
+        return ACTIVITY_LEVELS.get(self.activity_level, ACTIVITY_LEVELS["normal"])[0]
+
+    def weather_refresh_seconds(self):
+        return max(5, min(60, self.weather_refresh_minutes)) * 60
 
     def update_screen_metrics(self):
         self.screen_w = self.root.winfo_screenwidth()
@@ -180,16 +206,34 @@ class GromiPet:
     def taskbar_is_horizontal(self, rect):
         return rect and (rect.right - rect.left) >= (rect.bottom - rect.top)
 
+    def taskbar_patrol_bounds(self):
+        left = self.taskbar_left + TASKBAR_START_MARGIN
+        right = self.taskbar_left + self.taskbar_width - TASKBAR_TRAY_MARGIN
+        if right - left < self.pet_w + 40:
+            left = self.taskbar_left
+            right = self.taskbar_left + self.taskbar_width
+        return left, right
+
+    def is_peeking(self):
+        return self.taskbar_hosted and self.guard_mode and self.peek_mode
+
+    def visible_pet_h(self):
+        if self.is_peeking():
+            return max(28, int(self.pet_h * 0.52))
+        return self.pet_h
+
     def fit_taskbar_size(self):
         taskbar_scale = max(0.14, min(0.30, (self.taskbar_height - 6) / self.cell_h))
         self.set_render_scale(taskbar_scale)
+        visible_h = self.visible_pet_h()
         # Explorer can clip external child windows behind the Windows 11 taskbar.
         # Dock as a transparent top-level companion instead, using the same lane.
         if self.taskbar_top > self.screen_h // 2:
-            self.y = max(0, self.taskbar_top - self.pet_h + 5)
+            self.y = max(0, self.taskbar_top - visible_h + 5)
         else:
-            self.y = min(self.screen_h - self.pet_h, self.taskbar_top + self.taskbar_height - 5)
-        self.x = max(self.taskbar_left, min(self.x, self.taskbar_left + self.taskbar_width - self.pet_w))
+            self.y = min(self.screen_h - visible_h, self.taskbar_top + self.taskbar_height - 5)
+        left, right = self.taskbar_patrol_bounds()
+        self.x = max(left, min(self.x, right - self.pet_w))
 
     def host_in_taskbar(self):
         hwnd, rect = self.get_taskbar()
@@ -333,8 +377,8 @@ class GromiPet:
         window.configure(bg="#FFF8EE")
         window.resizable(False, False)
         window.attributes("-topmost", True)
-        window.geometry("390x520")
-        window.minsize(390, 520)
+        window.geometry("410x620")
+        window.minsize(410, 620)
 
         body = tk.Frame(window, bg="#FFF8EE", padx=16, pady=14)
         body.pack(fill="both", expand=True)
@@ -360,20 +404,32 @@ class GromiPet:
                        bg="#FFF8EE", activebackground="#FFF8EE", selectcolor="#FFF8EE").pack(side="left")
         tk.Radiobutton(mode_row, text="普通桌面", value="desktop", variable=mode_var,
                        bg="#FFF8EE", activebackground="#FFF8EE", selectcolor="#FFF8EE").pack(side="left", padx=(14, 0))
-        add_hint("任务栏模式会自动缩小；普通模式使用下面的桌面大小。")
+        add_hint("任务栏模式会自动缩小，并避开开始菜单和系统托盘区域。")
 
         guard_var = tk.BooleanVar(value=self.guard_mode)
+        peek_var = tk.BooleanVar(value=self.peek_mode)
         weather_var = tk.BooleanVar(value=self.weather_enabled)
         top_var = tk.BooleanVar(value=self.always_on_top)
         startup_var = tk.BooleanVar(value=self.startup_enabled())
+        activity_var = tk.StringVar(value=self.activity_level)
+        refresh_var = tk.StringVar(value=str(self.weather_refresh_minutes))
 
         add_section("行为")
         tk.Checkbutton(body, text="守护模式（固定不动）", variable=guard_var,
+                       bg="#FFF8EE", activebackground="#FFF8EE", selectcolor="#FFF8EE").pack(anchor="w")
+        tk.Checkbutton(body, text="任务栏守护时只露头", variable=peek_var,
                        bg="#FFF8EE", activebackground="#FFF8EE", selectcolor="#FFF8EE").pack(anchor="w")
         tk.Checkbutton(body, text="开机自动启动", variable=startup_var,
                        bg="#FFF8EE", activebackground="#FFF8EE", selectcolor="#FFF8EE").pack(anchor="w")
         tk.Checkbutton(body, text="悬停 3 秒显示天气", variable=weather_var,
                        bg="#FFF8EE", activebackground="#FFF8EE", selectcolor="#FFF8EE").pack(anchor="w")
+
+        activity_row = tk.Frame(body, bg="#FFF8EE")
+        activity_row.pack(fill="x", pady=(4, 0))
+        tk.Label(activity_row, text="动作频率：", bg="#FFF8EE", fg="#786A7B").pack(side="left")
+        for value, (label, _delay) in ACTIVITY_LEVELS.items():
+            tk.Radiobutton(activity_row, text=label, value=value, variable=activity_var,
+                           bg="#FFF8EE", activebackground="#FFF8EE", selectcolor="#FFF8EE").pack(side="left")
 
         add_section("显示")
         tk.Checkbutton(body, text="普通桌面时置顶", variable=top_var,
@@ -403,6 +459,12 @@ class GromiPet:
 
         tk.Button(city_row, text="修改", command=change_city, bg="#F4E7D5", relief="flat", padx=8).pack(side="right")
 
+        refresh_row = tk.Frame(body, bg="#FFF8EE")
+        refresh_row.pack(fill="x", pady=(5, 0))
+        tk.Label(refresh_row, text="刷新间隔：", bg="#FFF8EE", fg="#786A7B").pack(side="left")
+        tk.OptionMenu(refresh_row, refresh_var, "5", "10", "30", "60").pack(side="left")
+        tk.Label(refresh_row, text="分钟", bg="#FFF8EE", fg="#786A7B").pack(side="left", padx=(4, 0))
+
         saved_label = tk.Label(body, text="", bg="#FFF8EE", fg="#62835F", font=("Microsoft YaHei UI", 9, "bold"))
         saved_label.pack(anchor="w", pady=(10, 2))
 
@@ -412,14 +474,29 @@ class GromiPet:
             desired_topmost = bool(top_var.get())
             desired_startup = bool(startup_var.get())
             desired_mode = mode_var.get()
+            desired_peek = bool(peek_var.get())
+            desired_activity = activity_var.get() if activity_var.get() in ACTIVITY_LEVELS else "normal"
+            desired_refresh_minutes = max(5, min(60, int(refresh_var.get())))
             try:
                 if desired_guard != self.guard_mode:
                     self.toggle_guard()
+                if desired_peek != self.peek_mode:
+                    self.peek_mode = desired_peek
+                    self.last_geometry = None
+                    if self.taskbar_hosted:
+                        self.fit_taskbar_size()
+                    self.refresh()
                 if desired_weather != self.weather_enabled:
                     self.toggle_weather()
                 if desired_topmost != self.always_on_top:
                     self.always_on_top = desired_topmost
                     self.root.attributes("-topmost", True if self.taskbar_hosted else self.always_on_top)
+                if desired_activity != self.activity_level:
+                    self.activity_level = desired_activity
+                    if not self.guard_mode:
+                        self.next_activity_at = time.monotonic() + self.next_activity_delay()
+                if desired_refresh_minutes != self.weather_refresh_minutes:
+                    self.weather_refresh_minutes = desired_refresh_minutes
                 if desired_startup != self.startup_enabled():
                     self.set_startup_enabled(desired_startup)
                 if desired_mode != ("taskbar" if self.taskbar_hosted else "desktop"):
@@ -481,13 +558,15 @@ class GromiPet:
     def current_frame(self):
         frame = self.active_frames()[self.frame_index % len(self.active_frames())]
         frame = frame.resize((self.pet_w, self.pet_h), Image.Resampling.LANCZOS).convert("RGBA")
+        if self.is_peeking():
+            frame = frame.crop((0, 0, self.pet_w, self.visible_pet_h()))
         mask = frame.getchannel("A").point(lambda value: 255 if value >= 160 else 0)
         keyed = Image.new("RGBA", frame.size, (255, 0, 255, 255))
         keyed.paste(frame, mask=mask)
         return ImageTk.PhotoImage(keyed.convert("RGB"))
 
     def update_geometry(self):
-        geometry = f"{self.pet_w}x{self.pet_h}+{int(self.x)}+{int(self.y)}"
+        geometry = f"{self.pet_w}x{self.visible_pet_h()}+{int(self.x)}+{int(self.y)}"
         if geometry != self.last_geometry:
             self.root.geometry(geometry)
             self.last_geometry = geometry
@@ -508,7 +587,7 @@ class GromiPet:
         self.state = state
         self.frame_index = 0
         self.action_until = time.monotonic() + duration
-        self.next_activity_at = self.action_until + random.uniform(16, 30)
+        self.next_activity_at = self.action_until + self.next_activity_delay()
 
     def start_walking(self):
         if self.guard_mode:
@@ -516,7 +595,12 @@ class GromiPet:
         self.state = "walking"
         self.frame_index = 0
         self.walk_ticks = 0
-        self.walk_limit = random.randint(440, 820)
+        if self.activity_level == "calm":
+            self.walk_limit = random.randint(260, 420)
+        elif self.activity_level == "active":
+            self.walk_limit = random.randint(620, 980)
+        else:
+            self.walk_limit = random.randint(440, 820)
         self.direction = random.choice(["left", "right"])
         self.vx = MOVE_SPEED if self.direction == "right" else -MOVE_SPEED
 
@@ -548,8 +632,7 @@ class GromiPet:
             self.update_screen_metrics()
             if self.taskbar_hosted:
                 self.sync_taskbar(now)
-                left_boundary = self.taskbar_left
-                boundary = self.taskbar_left + self.taskbar_width
+                left_boundary, boundary = self.taskbar_patrol_bounds()
             else:
                 left_boundary, boundary = 0, self.screen_w
             if self.state == "walking":
@@ -562,7 +645,7 @@ class GromiPet:
                 elif self.walk_ticks >= self.walk_limit:
                     self.state = "idle"
                     self.frame_index = 0
-                    self.next_activity_at = now + random.uniform(14, 24)
+                    self.next_activity_at = now + self.next_activity_delay()
             elif self.state != "idle" and now >= self.action_until:
                 self.state = "idle"
                 self.frame_index = 0
@@ -602,18 +685,28 @@ class GromiPet:
 
     def menu_status(self):
         location = "任务栏贴边巡逻（已开启）" if self.taskbar_hosted else "普通桌面模式"
-        weather = f"天气悬停：{'开启' if self.weather_enabled else '关闭'}（3 秒）"
-        city = self.city if self.city else "未设置城市"
+        weather = f"天气：{'开启' if self.weather_enabled else '关闭'} · {self.city if self.city else '未设置城市'}"
         guard = "守护模式：开启（固定不动）" if self.guard_mode else "守护模式：关闭"
-        if self.taskbar_hosted:
-            topmost = f"置顶：{'开启' if self.always_on_top else '关闭'}"
-        else:
-            topmost = f"置顶：{'开启' if self.always_on_top else '关闭'}"
+        peek = "只露头：开启" if self.peek_mode else "只露头：关闭"
+        startup = f"开机启动：{'开启' if self.startup_enabled() else '关闭'}"
+        activity = f"动作频率：{self.activity_label()}"
+        topmost = f"置顶：{'开启' if self.always_on_top else '关闭'}"
         size = "任务栏高度自动适配" if self.taskbar_hosted else f"桌面大小：{int(self.desktop_scale * 100)}%"
-        return location, f"当前动作：{STATE_NAMES.get(self.state, '休息')}", guard, topmost, weather, f"天气城市：{city}", size
+        return (
+            f"当前：{location} · {STATE_NAMES.get(self.state, '休息')}",
+            weather,
+            f"{guard} · {peek}",
+            f"{activity} · {startup}",
+            f"{topmost} · {size}",
+        )
 
     def rebuild_menu(self):
         self.menu.delete(0, "end")
+        for status in self.menu_status():
+            self.menu.add_command(label=status, state="disabled")
+        self.menu.add_separator()
+        self.menu.add_command(label="切换到普通桌面" if self.taskbar_hosted else "切换到任务栏巡逻",
+                              command=lambda: self.set_mode("desktop" if self.taskbar_hosted else "taskbar"))
         self.menu.add_command(label="隐藏到系统托盘" if self.visible else "从系统托盘显示", command=self.toggle_visibility)
         self.menu.add_command(label=("✓ " if self.guard_mode else "") + "守护模式（固定不动）", command=self.toggle_guard)
         self.menu.add_command(label="设置…", command=self.show_settings)
@@ -663,7 +756,11 @@ class GromiPet:
             self.action_until = 0.0
             self.next_activity_at = float("inf")
         else:
-            self.next_activity_at = time.monotonic() + random.uniform(12, 20)
+            self.next_activity_at = time.monotonic() + self.next_activity_delay()
+        self.last_geometry = None
+        if self.taskbar_hosted:
+            self.fit_taskbar_size()
+        self.refresh()
         self.save_config()
 
     def toggle_always_on_top(self):
@@ -671,6 +768,25 @@ class GromiPet:
         # Taskbar mode remains above Explorer even when desktop-mode topmost is off.
         self.root.attributes("-topmost", True if self.taskbar_hosted else self.always_on_top)
         self.save_config()
+
+    def weather_tip(self, title, apparent_temperature=None):
+        if "雨" in title:
+            return "GROMI 提醒：出门记得带伞。"
+        if "雪" in title:
+            return "GROMI 提醒：路滑，慢慢走。"
+        if "雷" in title:
+            return "GROMI 提醒：先躲进安全的地方。"
+        try:
+            temp = float(apparent_temperature)
+        except (TypeError, ValueError):
+            temp = None
+        if temp is not None and temp >= 32:
+            return "GROMI 提醒：今天适合补水和少晒太阳。"
+        if temp is not None and temp <= 8:
+            return "GROMI 提醒：多穿一点，别被风偷袭。"
+        if "晴" in title:
+            return "GROMI 提醒：今天适合散步，也适合摸鱼。"
+        return "GROMI 提醒：保持好心情。"
 
     def draw_bubble(self, canvas, x1, y1, x2, y2, radius, fill, outline):
         canvas.create_polygon((x1 + 32, y2 - 2, x1 + 52, y2 - 2, x1 + 37, y2 + 12),
@@ -694,7 +810,7 @@ class GromiPet:
 
     def make_card(self, width):
         detailed = width > 220
-        height = 120 if detailed else 104
+        height = 142 if detailed else 126
         card = tk.Toplevel(self.root)
         card.overrideredirect(True)
         card.attributes("-topmost", True)
@@ -709,11 +825,13 @@ class GromiPet:
                            font=("Microsoft YaHei UI", 9, "bold"))
         canvas.create_oval(width - 45, 23, width - 31, 37, fill="#FF9DB1", outline="")
         canvas.create_text(27, 54, text=self.weather["title"], anchor="w", fill="#40364B",
-                           font=("Microsoft YaHei UI", 10, "bold"))
-        canvas.create_text(27, 76, text=self.weather["detail"], anchor="w", fill="#6D6072",
-                           font=("Microsoft YaHei UI", 9))
+                           font=("Microsoft YaHei UI", 10, "bold"), width=width - 54)
+        canvas.create_text(27, 78, text=self.weather["detail"], anchor="w", fill="#6D6072",
+                           font=("Microsoft YaHei UI", 9), width=width - 54)
+        canvas.create_text(27, 101, text=self.weather.get("tip", "GROMI 提醒：保持好心情。"),
+                           anchor="w", fill="#7C6A82", font=("Microsoft YaHei UI", 8), width=width - 54)
         if detailed and self.weather.get("updated"):
-            canvas.create_text(27, 96, text=f"更新 {self.weather['updated']}", anchor="w", fill="#AA9DAA",
+            canvas.create_text(27, 121, text=f"更新 {self.weather['updated']}", anchor="w", fill="#AA9DAA",
                                font=("Microsoft YaHei UI", 8))
         for widget in (card, canvas):
             widget.bind("<Enter>", self.card_enter)
@@ -761,7 +879,8 @@ class GromiPet:
         city = simpledialog.askstring("GROMI 天气", "输入城市名称（例如：北京、上海、深圳）：", initialvalue=self.city, parent=self.root)
         if city and city.strip():
             self.city = city.strip()
-            self.weather = {"title": f"{self.city}：正在更新天气", "detail": "GROMI 正在查看天空…", "updated": ""}
+            self.weather = {"title": f"{self.city}：正在更新天气", "detail": "GROMI 正在查看天空…",
+                            "tip": "等一下下，天气消息正在路上。", "updated": ""}
             self.save_config()
             self.refresh_weather(force=True)
 
@@ -770,7 +889,7 @@ class GromiPet:
             return
         if self.weather_loading and not force:
             return
-        if not force and self.weather.get("updated_at", 0) and time.time() - self.weather["updated_at"] < 600:
+        if not force and self.weather.get("updated_at", 0) and time.time() - self.weather["updated_at"] < self.weather_refresh_seconds():
             return
         self.weather_loading = True
         self.weather_request_id += 1
@@ -788,13 +907,17 @@ class GromiPet:
                                "&current=temperature_2m,apparent_temperature,weather_code&timezone=auto")
                 with urllib.request.urlopen(weather_url, timeout=8) as response:
                     current = json.load(response)["current"]
+                title = f"{place['name']} · {WEATHER_CODES.get(current.get('weather_code', -1), '天气')}"
+                apparent = current.get("apparent_temperature", "--")
                 weather = {
-                    "title": f"{place['name']} · {WEATHER_CODES.get(current.get('weather_code', -1), '天气')}",
-                    "detail": f"{current.get('temperature_2m', '--')}°C  ·  体感 {current.get('apparent_temperature', '--')}°C",
+                    "title": title,
+                    "detail": f"{current.get('temperature_2m', '--')}°C  ·  体感 {apparent}°C",
+                    "tip": self.weather_tip(title, apparent),
                     "updated": datetime.now().strftime("%H:%M"), "updated_at": time.time(),
                 }
             except (OSError, KeyError, IndexError, ValueError, json.JSONDecodeError):
-                weather = {"title": f"{request_city}：天气暂不可用", "detail": "请检查网络，稍后重试", "updated": ""}
+                weather = {"title": f"{request_city}：天气暂不可用", "detail": "请检查网络，稍后重试",
+                           "tip": "GROMI 暂时看不清天空。", "updated": ""}
             self.weather_queue.put((request_id, weather))
 
         threading.Thread(target=worker, daemon=True).start()
