@@ -22,16 +22,6 @@ GROMI 是一个 Windows 桌面宠物小应用，使用 Python、Tkinter、Pillow
 
 ![GROMI 图标预览](gromi-icon-preview.png)
 
-## 功能介绍图
-
-![任务栏巡逻](docs/images/feature-01-taskbar-patrol.png)
-
-![天气气泡](docs/images/feature-02-weather-bubble.png)
-
-![互动设置](docs/images/feature-03-settings.png)
-
-![开源与发布](docs/images/feature-04-github-release.png)
-
 ## 环境要求
 
 - Windows 10/11
